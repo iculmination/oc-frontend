@@ -1,16 +1,13 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { AuthBootstrap } from "@/components/auth/auth-bootstrap";
+import { AppFooter } from "@/components/layout/app-footer";
+import { AppHeader } from "@/components/layout/app-header";
+import { cn } from "@/lib/utils";
+import { Toaster } from "@/components/ui/sonner";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
 export const metadata: Metadata = {
   title: "Create Next App",
@@ -23,11 +20,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
+    <html lang="en" className={cn("font-mono", jetbrainsMono.variable)}>
+      <body className="min-h-screen bg-background text-foreground antialiased">
+        <AuthBootstrap />
+        <div className="relative flex min-h-screen flex-col overflow-x-hidden bg-[radial-gradient(circle_at_top,oklch(0.97_0.006_220)_0%,transparent_55%)]">
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,oklch(0.91_0.01_220)_1px,transparent_1px),linear-gradient(to_bottom,oklch(0.91_0.01_220)_1px,transparent_1px)] bg-size-[24px_24px] opacity-30" />
+          <AppHeader />
+          <main className="relative mx-auto flex w-full max-w-6xl flex-1 px-4 py-6 md:py-10">
+            {children}
+          </main>
+          <AppFooter />
+        </div>
+        <Toaster />
       </body>
     </html>
   );
