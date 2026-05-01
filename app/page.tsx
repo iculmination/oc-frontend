@@ -1,5 +1,5 @@
-import { GamePlayground } from "@/components/game-playground/game-playground";
+import { HomePageContent } from "@/components/home/home-page-content";
 
 export default function Home() {
-  return <GamePlayground />;
+  return <HomePageContent />;
 }

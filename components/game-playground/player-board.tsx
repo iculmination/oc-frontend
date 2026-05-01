@@ -13,7 +13,7 @@ type CardState = {
   last_action: string | null;
 };
 
-type PlayerBoardProps = {
+interface PlayerBoardProps {
   title: string;
   cardsAlive: number;
   cards: CardState[];

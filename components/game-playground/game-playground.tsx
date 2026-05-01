@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { PlayerBoard } from "@/components/game-playground/player-board";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { apiFetch } from "@/lib/api/client";
+import { useGame } from "@/lib/hooks/use-game";
 import {
   Select,
   SelectContent,
@@ -55,20 +56,31 @@ type StartGameResponse = {
 
 type GameStateResponse = {
   game_id: string;
+  player_id: string;
+  bot_id: string;
   state: GameSnapshot;
 };
 
-const DEFAULT_API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ??
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  "http://localhost:8000";
+type GameSummary = {
+  game_id: string;
+  status: string;
+  turn: number;
+  winner_player_id: string | null;
+  updated_at: string;
+};
+
+type GameListResponse = {
+  games: GameSummary[];
+};
 
 export function GamePlayground() {
-  const [apiBaseUrl, setApiBaseUrl] = useState(DEFAULT_API_BASE_URL);
+  const { activeGameId, setActiveGame, clearActiveGame } = useGame();
+
   const [gameId, setGameId] = useState<string | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [botId, setBotId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<GameSnapshot | null>(null);
+  const [myGames, setMyGames] = useState<GameSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
@@ -117,64 +129,56 @@ export function GamePlayground() {
     }
   }, [targetCandidates, selectedTargetId]);
 
-  async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(`${apiBaseUrl}${path}`, {
-      ...init,
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-    });
-
-    if (!response.ok) {
-      let detail = `Request failed with status ${response.status}`;
-      try {
-        const body = (await response.json()) as { detail?: string };
-        if (body.detail) detail = body.detail;
-      } catch {
-        // ignore parse error and keep default message
-      }
-      throw new Error(detail);
-    }
-
-    return (await response.json()) as T;
-  }
-
   async function startGame() {
     setIsLoading(true);
     try {
-      const data = await requestJson<StartGameResponse>("game/start-vs-bot", {
+      const data = await apiFetch<StartGameResponse>("/game/start-vs-bot", {
         method: "POST",
       });
       setGameId(data.game_id);
       setPlayerId(data.player_id);
       setBotId(data.bot_id);
       setSnapshot(data.state);
+      setActiveGame(data.game_id);
       toast.success("Game started");
+      await loadMyGames();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to start game");
+      const message = error instanceof Error ? error.message : "Failed to start game";
+      if (message.includes("already has an active game")) {
+        toast.info("You already have an active game, loading it...");
+        await loadActiveGame();
+      } else {
+        toast.error(message);
+      }
     } finally {
       setIsLoading(false);
     }
   }
 
   async function playTurn() {
-    if (!gameId || !playerId || !selectedCardId) return;
+    if (!gameId || !selectedCardId) return;
 
     setIsLoading(true);
     try {
-      const data = await requestJson<GameStateResponse>(`game/${gameId}/turn`, {
+      const data = await apiFetch<GameStateResponse>(`/game/${gameId}/turn`, {
         method: "POST",
         body: JSON.stringify({
-          player_id: playerId,
           card_id: selectedCardId,
           target_id: selectedTargetId,
         }),
       });
+      setGameId(data.game_id);
+      setPlayerId(data.player_id);
+      setBotId(data.bot_id);
       setSnapshot(data.state);
       if (data.state.status === "finished") {
+        clearActiveGame();
+      } else {
+        setActiveGame(data.game_id);
+      }
+      if (data.state.status === "finished") {
         toast.success("Game finished");
+        await loadMyGames();
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to play turn");
@@ -187,7 +191,9 @@ export function GamePlayground() {
     if (!gameId) return;
     setIsLoading(true);
     try {
-      const data = await requestJson<GameStateResponse>(`game/${gameId}`);
+      const data = await apiFetch<GameStateResponse>(`/game/${gameId}`);
+      setPlayerId(data.player_id);
+      setBotId(data.bot_id);
       setSnapshot(data.state);
       toast.success("State updated");
     } catch (error) {
@@ -197,6 +203,89 @@ export function GamePlayground() {
     }
   }
 
+  const loadGameById = useCallback(async function loadGameById(targetGameId: string) {
+    setIsLoading(true);
+    try {
+      const data = await apiFetch<GameStateResponse>(`/game/${targetGameId}`);
+      setGameId(data.game_id);
+      setPlayerId(data.player_id);
+      setBotId(data.bot_id);
+      setSnapshot(data.state);
+      if (data.state.status === "finished") {
+        clearActiveGame();
+      } else {
+        setActiveGame(data.game_id);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to load game");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [clearActiveGame, setActiveGame]);
+
+  const loadActiveGame = useCallback(async function loadActiveGame() {
+    try {
+      const active = await apiFetch<GameSummary>("/game/active");
+      await loadGameById(active.game_id);
+    } catch {
+      clearActiveGame();
+    }
+  }, [clearActiveGame, loadGameById]);
+
+  const loadMyGames = useCallback(async function loadMyGames() {
+    try {
+      const data = await apiFetch<GameListResponse>("/game/my");
+      setMyGames(data.games);
+    } catch {
+      setMyGames([]);
+    }
+  }, []);
+
+  async function surrenderGame() {
+    if (!gameId) return;
+    setIsLoading(true);
+    try {
+      const data = await apiFetch<GameStateResponse>(`/game/${gameId}/surrender`, {
+        method: "POST",
+      });
+      setSnapshot(data.state);
+      clearActiveGame();
+      toast.success("You surrendered this game.");
+      await loadMyGames();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to surrender");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function endGame() {
+    if (!gameId) return;
+    setIsLoading(true);
+    try {
+      const data = await apiFetch<GameStateResponse>(`/game/${gameId}/end`, {
+        method: "POST",
+      });
+      setSnapshot(data.state);
+      clearActiveGame();
+      toast.success("Game ended.");
+      await loadMyGames();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to end game");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(function bootstrapGameSession() {
+    void loadMyGames();
+    if (activeGameId) {
+      void loadGameById(activeGameId);
+      return;
+    }
+    void loadActiveGame();
+  }, [activeGameId, loadActiveGame, loadGameById, loadMyGames]);
+
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-4 py-6">
       <Card>
@@ -204,14 +293,6 @@ export function GamePlayground() {
           <CardTitle>Outer Colony • Local Test Arena</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 pt-4">
-          <label className="space-y-1 text-xs">
-            <span className="text-muted-foreground">Backend URL</span>
-            <Input
-              value={apiBaseUrl}
-              onChange={(event) => setApiBaseUrl(event.target.value)}
-              placeholder="http://localhost:8000"
-            />
-          </label>
           <div className="flex flex-wrap gap-2">
             <Button onClick={startGame} disabled={isLoading}>
               Start vs Bot
@@ -231,6 +312,20 @@ export function GamePlayground() {
             </Button>
             <Button onClick={refreshState} disabled={!gameId || isLoading} variant="outline">
               Refresh State
+            </Button>
+            <Button
+              onClick={surrenderGame}
+              disabled={!gameId || isLoading || snapshot?.status === "finished"}
+              variant="destructive"
+            >
+              Surrender
+            </Button>
+            <Button
+              onClick={endGame}
+              disabled={!gameId || isLoading || snapshot?.status === "finished"}
+              variant="outline"
+            >
+              End Game
             </Button>
           </div>
           <div className="grid gap-2 md:grid-cols-2">
@@ -291,6 +386,42 @@ export function GamePlayground() {
                 : "-"}
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle>My Games</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 pt-4 text-xs text-muted-foreground">
+          {myGames.length ? (
+            <div className="space-y-1">
+              {myGames.map((game) => (
+                <div
+                  key={game.game_id}
+                  className="flex flex-wrap items-center justify-between gap-2 border border-border px-2 py-1"
+                >
+                  <div>
+                    <p>{game.game_id}</p>
+                    <p>
+                      {game.status} • round {game.turn}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={function onResumeGame() {
+                      void loadGameById(game.game_id);
+                    }}
+                  >
+                    Open
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p>No games yet.</p>
+          )}
         </CardContent>
       </Card>
 

@@ -1,5 +1,10 @@
 import { AuthPanel } from "@/components/auth/auth-panel";
+import { GuestOnly } from "@/components/auth/guest-only";
 
 export default function AuthPage() {
-  return <AuthPanel />;
+  return (
+    <GuestOnly>
+      <AuthPanel />
+    </GuestOnly>
+  );
 }
