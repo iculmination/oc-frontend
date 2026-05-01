@@ -1,6 +1,6 @@
 "use client";
-
-import { useCallback, useEffect, useMemo, useState } from "react";
+// TODO: refactor and break down the component
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { PlayerBoard } from "@/components/game-playground/player-board";
@@ -84,6 +84,9 @@ export function GamePlayground() {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const hasBootstrappedRef = useRef(false);
+  const previousTurnRef = useRef<number | null>(null);
+  const [highlightTurn, setHighlightTurn] = useState(false);
 
   const playerBoard = useMemo(() => {
     if (!snapshot || !playerId) return null;
@@ -99,7 +102,6 @@ export function GamePlayground() {
     if (!playerBoard || !selectedCardId) return null;
     return playerBoard.cards.find((card) => card.id === selectedCardId) ?? null;
   }, [playerBoard, selectedCardId]);
-
   const targetCandidates = useMemo(() => {
     if (!snapshot || !selectedCard || !playerId || !botId) return [];
     if (selectedCard.ability === "attack") return snapshot.players[botId]?.cards ?? [];
@@ -108,6 +110,10 @@ export function GamePlayground() {
     }
     return [];
   }, [snapshot, selectedCard, playerId, botId]);
+  const selectedTarget = useMemo(() => {
+    if (!selectedTargetId) return null;
+    return targetCandidates.find((card) => card.id === selectedTargetId) ?? null;
+  }, [selectedTargetId, targetCandidates]);
 
   useEffect(() => {
     if (!playerBoard?.cards.length) {
@@ -277,20 +283,65 @@ export function GamePlayground() {
     }
   }
 
-  useEffect(function bootstrapGameSession() {
-    void loadMyGames();
-    if (activeGameId) {
+  useEffect(
+    function bootstrapGameSessionOnce() {
+      if (hasBootstrappedRef.current) return;
+      hasBootstrappedRef.current = true;
+
+      void loadMyGames();
+      if (activeGameId) {
+        void loadGameById(activeGameId);
+      } else {
+        void loadActiveGame();
+      }
+    },
+    [activeGameId, loadActiveGame, loadGameById, loadMyGames]
+  );
+
+  useEffect(
+    function syncActiveGameChange() {
+      if (!activeGameId) return;
+      if (activeGameId === gameId) return;
       void loadGameById(activeGameId);
-      return;
-    }
-    void loadActiveGame();
-  }, [activeGameId, loadActiveGame, loadGameById, loadMyGames]);
+    },
+    [activeGameId, gameId, loadGameById]
+  );
+
+  useEffect(
+    function highlightTurnChange() {
+      const currentTurn = snapshot?.turn ?? null;
+      if (currentTurn == null) return;
+
+      if (previousTurnRef.current != null && previousTurnRef.current !== currentTurn) {
+        setHighlightTurn(true);
+        const timeout = window.setTimeout(() => setHighlightTurn(false), 900);
+        previousTurnRef.current = currentTurn;
+        return () => window.clearTimeout(timeout);
+      }
+
+      previousTurnRef.current = currentTurn;
+    },
+    [snapshot?.turn]
+  );
+
+  const hasActiveSession = Boolean(gameId && snapshot?.status !== "finished");
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-4 px-4 py-6">
-      <Card>
+    <main className="mx-auto flex w-full max-w-6xl flex-col gap-4">
+      <Card className="border-primary/30 bg-card/90 shadow-[6px_6px_0px_0px_hsl(var(--muted))]">
         <CardHeader className="border-b">
-          <CardTitle>Outer Colony • Local Test Arena</CardTitle>
+          <CardTitle className="flex items-center justify-between gap-3">
+            <span>Outer Colony • Local Test Arena</span>
+            <span
+              className={
+                hasActiveSession
+                  ? "inline-flex border border-primary/40 bg-primary/10 px-2 py-1 text-[11px] uppercase text-primary"
+                  : "inline-flex border border-border px-2 py-1 text-[11px] uppercase text-muted-foreground"
+              }
+            >
+              {hasActiveSession ? "Live Match" : "Idle"}
+            </span>
+          </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 pt-4">
           <div className="flex flex-wrap gap-2">
@@ -331,22 +382,35 @@ export function GamePlayground() {
           <div className="grid gap-2 md:grid-cols-2">
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">Your card action</p>
-              <Select
-                value={selectedCardId ?? ""}
-                onValueChange={(value) => setSelectedCardId(value)}
-                disabled={!playerBoard?.cards.length}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select your card" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(playerBoard?.cards ?? []).map((card) => (
-                    <SelectItem key={card.id} value={card.id}>
-                      {card.name} ({card.ability})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {playerBoard?.cards.length ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {playerBoard.cards.map((card) => {
+                    const isSelected = selectedCardId === card.id;
+                    return (
+                      <button
+                        key={card.id}
+                        type="button"
+                        onClick={() => setSelectedCardId(card.id)}
+                        className={
+                          isSelected
+                            ? "border border-primary bg-primary/10 px-2 py-2 text-left text-xs transition-all duration-200 hover:-translate-y-0.5"
+                            : "border border-border/80 bg-card px-2 py-2 text-left text-xs transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40"
+                        }
+                      >
+                        <p className="font-medium">{card.name}</p>
+                        <p className="text-muted-foreground uppercase">{card.ability}</p>
+                        <p className="text-muted-foreground">
+                          HP {card.health}/{card.max_health} • ATK {card.attack}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="border border-dashed border-border px-2 py-2 text-xs text-muted-foreground">
+                  No cards available.
+                </div>
+              )}
             </div>
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">Target (optional)</p>
@@ -372,11 +436,18 @@ export function GamePlayground() {
             </div>
           </div>
           <div className="grid gap-1 text-xs text-muted-foreground">
+            <p>
+              Selected card:{" "}
+              {selectedCard ? `${selectedCard.name} (${selectedCard.ability})` : "-"}
+            </p>
+            <p>Selected target: {selectedTarget?.name ?? "Auto target"}</p>
             <p>Game ID: {gameId ?? "-"}</p>
             <p>Player ID: {playerId ?? "-"}</p>
             <p>Bot ID: {botId ?? "-"}</p>
             <p>Status: {snapshot?.status ?? "-"}</p>
-            <p>Round: {snapshot?.turn ?? "-"}</p>
+            <p className={highlightTurn ? "animate-pulse text-primary" : undefined}>
+              Round: {snapshot?.turn ?? "-"}
+            </p>
             <p>Active Player: {snapshot?.active_player ?? "-"}</p>
             <p>Winner: {snapshot?.winner_id ?? "-"}</p>
             <p>
@@ -389,75 +460,100 @@ export function GamePlayground() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader className="border-b">
-          <CardTitle>My Games</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 pt-4 text-xs text-muted-foreground">
-          {myGames.length ? (
-            <div className="space-y-1">
-              {myGames.map((game) => (
-                <div
-                  key={game.game_id}
-                  className="flex flex-wrap items-center justify-between gap-2 border border-border px-2 py-1"
-                >
-                  <div>
-                    <p>{game.game_id}</p>
-                    <p>
-                      {game.status} • round {game.turn}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={function onResumeGame() {
-                      void loadGameById(game.game_id);
-                    }}
-                  >
-                    Open
-                  </Button>
+      <section className="grid gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="grid gap-4">
+          <section className="grid gap-4 md:grid-cols-2">
+            <PlayerBoard
+              title="You"
+              cardsAlive={playerBoard?.cards_alive ?? 0}
+              cards={playerBoard?.cards ?? []}
+              isActive={snapshot?.active_player === playerId}
+            />
+            <PlayerBoard
+              title="Bot"
+              cardsAlive={botBoard?.cards_alive ?? 0}
+              cards={botBoard?.cards ?? []}
+              isActive={snapshot?.active_player === botId}
+            />
+          </section>
+
+          <Card className="bg-card/95">
+            <CardHeader className="border-b">
+              <CardTitle>Battle Log</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 pt-4">
+              {snapshot?.battle_log.length ? (
+                <div className="max-h-64 space-y-1 overflow-auto text-xs text-muted-foreground">
+                  {snapshot.battle_log.map((entry, index) => {
+                    const isFresh = index >= snapshot.battle_log.length - 2;
+                    return (
+                      <p
+                        key={`${entry.round}-${entry.actor}-${index}`}
+                        className={isFresh ? "animate-pulse text-foreground" : undefined}
+                      >
+                        [R{entry.round}] {entry.actor}: {entry.text}
+                      </p>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
-          ) : (
-            <p>No games yet.</p>
-          )}
-        </CardContent>
-      </Card>
+              ) : (
+                <p className="text-xs text-muted-foreground">No battle log entries yet.</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
-      <section className="grid gap-4 md:grid-cols-2">
-        <PlayerBoard
-          title="You"
-          cardsAlive={playerBoard?.cards_alive ?? 0}
-          cards={playerBoard?.cards ?? []}
-          isActive={snapshot?.active_player === playerId}
-        />
-        <PlayerBoard
-          title="Bot"
-          cardsAlive={botBoard?.cards_alive ?? 0}
-          cards={botBoard?.cards ?? []}
-          isActive={snapshot?.active_player === botId}
-        />
+        <aside className="grid gap-4">
+          <Card className="bg-card/90">
+            <CardHeader className="border-b">
+              <CardTitle>Hangar • My Games</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 pt-4 text-xs text-muted-foreground">
+              <p className="text-[11px] uppercase tracking-wide">
+                Archived and parallel sessions live here.
+              </p>
+              {myGames.length ? (
+                <div className="max-h-80 space-y-2 overflow-auto pr-1">
+                  {myGames.map((game) => {
+                    const isCurrent = game.game_id === gameId;
+                    const isPlayable = game.status !== "finished";
+                    return (
+                      <div
+                        key={game.game_id}
+                        className={
+                          isCurrent
+                            ? "border border-primary/40 bg-primary/5 px-2 py-1"
+                            : "border border-border px-2 py-1 transition-colors hover:border-primary/30"
+                        }
+                      >
+                        <div className="mb-1">
+                          <p className="truncate">{game.game_id}</p>
+                          <p>
+                            {game.status} • round {game.turn}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant={isCurrent ? "secondary" : "outline"}
+                          onClick={function onResumeGame() {
+                            void loadGameById(game.game_id);
+                          }}
+                          disabled={!isPlayable && !isCurrent}
+                          className="w-full"
+                        >
+                          {isCurrent ? "Opened" : "Open"}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p>No games yet.</p>
+              )}
+            </CardContent>
+          </Card>
+        </aside>
       </section>
-
-      <Card>
-        <CardHeader className="border-b">
-          <CardTitle>Battle Log</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 pt-4">
-          {snapshot?.battle_log.length ? (
-            <div className="max-h-64 space-y-1 overflow-auto text-xs text-muted-foreground">
-              {snapshot.battle_log.map((entry, index) => (
-                <p key={`${entry.round}-${entry.actor}-${index}`}>
-                  [R{entry.round}] {entry.actor}: {entry.text}
-                </p>
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">No battle log entries yet.</p>
-          )}
-        </CardContent>
-      </Card>
     </main>
   );
 }
